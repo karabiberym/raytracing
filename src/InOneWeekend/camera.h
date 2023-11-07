@@ -18,6 +18,11 @@
 #include "material.h"
 
 #include <iostream>
+#include <fstream>
+#include <csignal>
+
+#include <sys/mman.h>
+#include <sys/wait.h>
 
 
 class camera {
@@ -35,24 +40,66 @@ class camera {
     double defocus_angle = 0;  // Variation angle of rays through each pixel
     double focus_dist = 10;    // Distance from camera lookfrom point to plane of perfect focus
 
-    void render(const hittable& world) {
+    void render(const hittable& world, int num_processes) {
         initialize();
 
-        std::cout << "P3\n" << image_width << ' ' << image_height << "\n255\n";
+        // Allocate shared memory for image
+        int image_size_in_bytes = sizeof(color) * image_width * image_height;
+        color *rendered_image = (color*)mmap(nullptr, image_size_in_bytes, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
 
-        for (int j = 0; j < image_height; ++j) {
-            std::clog << "\rScanlines remaining: " << (image_height - j) << ' ' << std::flush;
+        std::ofstream output_file("image.ppm");
+        output_file << "P3\n" << image_width << ' ' << image_height << "\n255\n";
+
+        // Parallel rendering using multiple processes
+        pid_t child_pid;
+        for (int process_id = 0; process_id < num_processes; ++process_id) {
+            child_pid = fork();
+            if (child_pid == 0) {
+                // Child process renders portion of process
+                int lines_per_process = image_height / num_processes;
+                int start_line = process_id * lines_per_process;
+                int end_line = (process_id == num_processes - 1) ? image_height : start_line + lines_per_process;
+
+                renderLine(world, start_line, end_line, rendered_image);
+                exit(0);
+            } else if (child_pid == -1) {
+                std::cerr << "Fork failed." << std::endl;
+                return;
+            }
+        }
+
+        // Parent process waiting for child processes to finish
+        for (int i = 0; i< num_processes; ++i) {
+            wait(nullptr);
+        }
+
+        // Output rendered image
+        if (getpid() != 0) {
+            for (int j = 0; j < image_height - 1; ++j) {
+                std::clog << "\rScanlines remaining: " << (image_height - j) << ' ' << std::flush;
+                for (int i = 0; i < image_width; ++i) {
+                    write_color(output_file, rendered_image[i + j * image_width], samples_per_pixel);
+                }
+            }
+            output_file.flush();
+        }
+
+        munmap(rendered_image, image_size_in_bytes);
+
+        std::clog << "\rDone.\n";
+    }
+
+    void renderLine(const hittable& world, int start_line, int end_line, color *rendered_image) {
+        for (int j = start_line; j < end_line; ++j) {
             for (int i = 0; i < image_width; ++i) {
-                color pixel_color(0,0,0);
+                color pixel_color(0, 0, 0);
                 for (int sample = 0; sample < samples_per_pixel; ++sample) {
                     ray r = get_ray(i, j);
                     pixel_color += ray_color(r, max_depth, world);
                 }
-                write_color(std::cout, pixel_color, samples_per_pixel);
+                rendered_image[i + j * image_width] = pixel_color;
             }
         }
-
-        std::clog << "\rDone.                 \n";
     }
 
   private:

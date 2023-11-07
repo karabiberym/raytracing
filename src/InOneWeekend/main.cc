@@ -18,7 +18,14 @@
 #include "sphere.h"
 
 
-int main() {
+int main(int argc, char *argv[]) {
+    int num_processes = atoi(argv[1]);
+
+    if (num_processes < 1) {
+        printf("Invalid number of processes.\n");
+        exit(1);
+    }
+
     hittable_list world;
 
     auto ground_material = make_shared<lambertian>(color(0.5, 0.5, 0.5));
@@ -76,5 +83,5 @@ int main() {
     cam.defocus_angle = 0.6;
     cam.focus_dist    = 10.0;
 
-    cam.render(world);
+    cam.render(world, num_processes);
 }
